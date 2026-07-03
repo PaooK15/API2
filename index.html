@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Trò Chơi Nghiêng Đầu</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Thư viện MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    
+    <!-- Thư viện Canvas Confetti (Pháo hoa) -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <style>
+        .mirrored { transform: scaleX(-1); }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        }
+        .transition-all { transition: all 0.3s ease; }
+        
+        .camera-frame {
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5), inset 0 0 20px rgba(59, 130, 246, 0.5);
+        }
+        /* Hiệu ứng rung lắc khi chọn sai */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+            20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
+        .animate-shake {
+            animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        /* Style cho hình ảnh động vật */
+        .animal-image {
+            max-height: 110px;
+            max-width: 100%;
+            object-fit: contain;
+            border-radius: 12px;
+            filter: drop-shadow(0px 5px 15px rgba(0,0,0,0.5));
+            transition: transform 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white font-sans overflow-hidden h-screen w-screen flex flex-col items-center justify-center relative bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
+
+    <!-- Màn hình Bắt đầu -->
+    <div id="start-screen" class="absolute inset-0 z-50 flex items-center justify-center bg-slate-900 bg-opacity-95 transition-all duration-500 overflow-y-auto">
+        <div class="p-8 glass-panel rounded-2xl max-w-lg w-[90%] text-center border-t-4 border-blue-500">
+            <h1 class="text-3xl md:text-4xl font-bold mb-4 text-blue-400">Đố Vui Động Vật 🐾</h1>
+            <p class="mb-8 text-gray-300 text-base md:text-lg">Trò chơi điều khiển bằng Camera!<br>Nghiêng đầu sang Trái hoặc Phải để chọn hình ảnh con vật chính xác.</p>
+            
+            <button id="start-btn" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-12 rounded-full shadow-lg transform hover:scale-105 transition-all text-xl">
+                Bắt đầu Chơi
+            </button>
+        </div>
+    </div>
+
+    <!-- Màn hình Tải -->
+    <div id="loading-screen" class="absolute inset-0 z-40 flex flex-col items-center justify-center bg-slate-900 hidden">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500 mb-4"></div>
+        <h2 class="text-xl font-semibold">Đang bật Camera & AI...</h2>
+        <p class="text-gray-400 text-sm mt-2">Lần đầu tải có thể mất vài giây</p>
+    </div>
+
+    <!-- Màn hình Kết thúc -->
+    <div id="game-over-screen" class="absolute inset-0 z-50 flex items-center justify-center bg-slate-900 bg-opacity-95 hidden">
+        <div class="text-center p-8 glass-panel rounded-2xl max-w-md w-[90%]">
+            <h1 class="text-4xl font-bold mb-2 text-yellow-400">Kết thúc! 🏁</h1>
+            <p class="text-xl mb-8 text-gray-300">Điểm của bạn: <span id="final-score" class="font-bold text-white text-4xl">0</span>/50</p>
+            
+            <button id="restart-btn" class="bg-green-500 hover:bg-green-400 text-white font-bold py-3 px-8 rounded-full shadow-lg transform hover:scale-105 transition-all">
+                Chơi lại ngay
+            </button>
+        </div>
+    </div>
+
+    <!-- Giao diện Trò chơi chính -->
+    <div id="game-ui" class="w-full h-full flex flex-col items-center justify-between p-4 md:p-8 hidden relative z-10">
+        
+        <!-- Thanh trạng thái -->
+        <div class="flex justify-between items-center w-full max-w-4xl">
+            <div class="glass-panel px-5 py-2 rounded-xl font-bold text-blue-300">
+                Điểm: <span id="score-display" class="text-white">0</span>
+            </div>
+            <div class="glass-panel px-5 py-2 rounded-xl font-bold text-gray-300">
+                Câu: <span id="question-count" class="text-white">1/5</span>
+            </div>
+        </div>
+
+        <!-- Câu hỏi -->
+        <div class="w-full max-w-2xl mt-4 mb-2 z-20">
+            <div class="glass-panel p-6 rounded-2xl text-center shadow-xl border-t-4 border-yellow-400">
+                <h2 id="question-text" class="text-2xl md:text-3xl font-bold leading-snug">Câu hỏi sẽ hiện ở đây</h2>
+            </div>
+        </div>
+
+        <!-- Khung Camera & Đáp án 2 bên -->
+        <div class="flex flex-row items-center justify-center w-full max-w-5xl gap-4 md:gap-8 flex-1">
+            
+            <!-- Đáp án Trái -->
+            <div id="option-left" class="flex-1 glass-panel p-4 md:p-6 rounded-2xl text-center border-4 border-transparent transition-all flex flex-col items-center justify-center h-48 md:h-56 relative overflow-hidden">
+                <span class="absolute top-3 left-0 w-full text-xs text-gray-400 uppercase font-bold tracking-widest z-10">Nghiêng Trái</span>
+                <div id="ans-left-img" class="mt-4 flex items-center justify-center h-full w-full"></div>
+            </div>
+
+            <!-- KHUNG CAMERA TRUNG TÂM -->
+            <div class="relative w-48 h-48 md:w-72 md:h-72 rounded-full overflow-hidden camera-frame flex-shrink-0 border-4 border-blue-400 bg-slate-800">
+                <video id="input_video" class="w-full h-full object-cover mirrored" playsinline></video>
+                
+                <div id="center-prompt" class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 hidden">
+                    <span class="text-yellow-400 font-bold text-center animate-pulse px-4 text-lg">Vui lòng nhìn thẳng<br>để tiếp tục</span>
+                </div>
+            </div>
+
+            <!-- Đáp án Phải -->
+            <div id="option-right" class="flex-1 glass-panel p-4 md:p-6 rounded-2xl text-center border-4 border-transparent transition-all flex flex-col items-center justify-center h-48 md:h-56 relative overflow-hidden">
+                <span class="absolute top-3 left-0 w-full text-xs text-gray-400 uppercase font-bold tracking-widest z-10">Nghiêng Phải</span>
+                <div id="ans-right-img" class="mt-4 flex items-center justify-center h-full w-full"></div>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="hidden_canvas" class="hidden"></canvas>
+
+    <script>
+        // --- 1. DỮ LIỆU CÂU HỎI CỐ ĐỊNH ---
+        // HƯỚNG DẪN THÊM ẢNH CỦA BẠN: 
+        // Thay link "https://placehold.co/..." bằng tên file ảnh của bạn (VD: "con-tho.png", "con-meo.jpg")
+        // Hãy đảm bảo file ảnh được copy vào cùng một thư mục với file index.html này.
+        const questions = [
+            { q: "Đâu là con thỏ?", left: "tho.png", right: "gau.png", ans: "left" },
+            { q: "Đâu là con mèo?", left: "cho.png", right: "meo.png", ans: "right" },
+            { q: "Đâu là con gà mái?", left: "congamai.png", right: "chim.png", ans: "left" },
+            { q: "Đâu là con gà trống?", left: "vit.png", right: "congatrong.png", ans: "right" },
+            { q: "Đâu là con cá?", left: "ca.png", right: "rua.png", ans: "left"}, 
+	      {q: "Đâu là gương mặt vui?", left: "matvui.png", right: "matbuon.png", ans: "left"},
+ 	{q: "Đâu là gương mặt buồn?", left: "matbuon.png", right: "cuoihaha.png", ans: "left"},
+ 	{q: "Đâu là gương mặt tức giận?", left: "matnghingo.png", right: "matgian.png", ans: "right"},
+ 	{q: "Đâu là gương mặt khóc?", left: "matvui.png", right: "matkhoc.png", ans: "right"},
+ 	{q: "Đâu là gương mặt ngạc nhiên?", left: "matngacnhien.png", right: "matnghingo.png", ans: "left"}
+        ];
+
+        // --- 2. BIẾN TRẠNG THÁI ---
+        let currentQuestionIndex = 0;
+        let score = 0;
+        let gameState = 'START'; // START, LOADING, PLAYING, COOLDOWN, GAMEOVER
+        let camera = null;
+        let faceMesh = null;
+        
+        // Trình tạo âm thanh (Web Audio API)
+        let audioCtx;
+
+        const videoElement = document.getElementById('input_video');
+        const screens = {
+            start: document.getElementById('start-screen'),
+            loading: document.getElementById('loading-screen'),
+            gameUi: document.getElementById('game-ui'),
+            gameOver: document.getElementById('game-over-screen')
+        };
+        const ui = {
+            question: document.getElementById('question-text'),
+            leftOpt: document.getElementById('option-left'),
+            leftImg: document.getElementById('ans-left-img'),
+            rightOpt: document.getElementById('option-right'),
+            rightImg: document.getElementById('ans-right-img'),
+            score: document.getElementById('score-display'),
+            count: document.getElementById('question-count'),
+            centerPrompt: document.getElementById('center-prompt'),
+            finalScore: document.getElementById('final-score')
+        };
+
+        // --- 3. HỆ THỐNG ÂM THANH & HIỆU ỨNG ---
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                // Tiếng Ting (âm cao, vui vẻ)
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+                osc.frequency.exponentialRampToValueAtTime(1046.50, audioCtx.currentTime + 0.1); // C6
+                gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.4);
+            } else {
+                // Tiếng Bíp trầm (sai)
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            }
+        }
+
+        function triggerFireworks() {
+            const duration = 1.5 * 1000;
+            const animationEnd = Date.now() + duration;
+            const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
+
+            function randomInRange(min, max) {
+                return Math.random() * (max - min) + min;
+            }
+
+            const interval = setInterval(function() {
+                const timeLeft = animationEnd - Date.now();
+                if (timeLeft <= 0) {
+                    return clearInterval(interval);
+                }
+                const particleCount = 50 * (timeLeft / duration);
+                confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } }));
+                confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } }));
+            }, 250);
+        }
+
+        // --- 4. LOGIC GAME ---
+        function loadQuestion() {
+            if (currentQuestionIndex >= questions.length) {
+                endGame();
+                return;
+            }
+            const q = questions[currentQuestionIndex];
+            ui.question.innerText = q.q;
+            
+            // Thay vì dùng text (emoji), giờ ta chèn thẻ <img> với đường dẫn hình ảnh
+            ui.leftImg.innerHTML = `<img src="${q.left}" class="animal-image" alt="Hình bên trái">`;
+            ui.rightImg.innerHTML = `<img src="${q.right}" class="animal-image" alt="Hình bên phải">`;
+            
+            ui.count.innerText = `${currentQuestionIndex + 1}/${questions.length}`;
+            
+            // Đặt lại style các hộp lựa chọn
+            const baseClasses = "flex-1 glass-panel p-4 md:p-6 rounded-2xl text-center border-4 border-transparent transition-all flex flex-col items-center justify-center h-48 md:h-56 relative overflow-hidden";
+            ui.leftOpt.className = baseClasses;
+            ui.rightOpt.className = baseClasses;
+            
+            gameState = 'PLAYING';
+            ui.centerPrompt.classList.add('hidden');
+        }
+
+        function selectAnswer(side) {
+            gameState = 'PROCESSING';
+            const q = questions[currentQuestionIndex];
+            const isCorrect = (side === q.ans);
+
+            const selectedBox = side === 'left' ? ui.leftOpt : ui.rightOpt;
+            
+            if (isCorrect) {
+                score += 10;
+                ui.score.innerText = score;
+                selectedBox.classList.replace('border-transparent', 'border-green-500');
+                selectedBox.classList.add('bg-green-900', 'bg-opacity-80');
+                
+                playSound('correct');
+                // Bắn pháo hoa nhỏ cho mỗi câu đúng
+                confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+
+                // Chờ 1.5s xem kết quả rồi qua câu mới
+                setTimeout(() => {
+                    currentQuestionIndex++;
+                    if (currentQuestionIndex < questions.length) {
+                        gameState = 'COOLDOWN'; 
+                        ui.centerPrompt.classList.remove('hidden');
+                    } else {
+                        endGame();
+                    }
+                }, 1500);
+            } else {
+                // Xử lý khi chọn sai
+                selectedBox.classList.replace('border-transparent', 'border-red-500');
+                selectedBox.classList.add('bg-red-900', 'bg-opacity-80', 'animate-shake');
+                playSound('wrong');
+
+                // Chờ 0.8s để xem hiệu ứng rung lắc, sau đó reset để người chơi chọn lại
+                setTimeout(() => {
+                    selectedBox.classList.replace('border-red-500', 'border-transparent');
+                    selectedBox.classList.remove('bg-red-900', 'bg-opacity-80', 'animate-shake');
+                    
+                    // Bắt buộc đưa đầu về giữa mới được tiếp tục chọn
+                    gameState = 'COOLDOWN'; 
+                    ui.centerPrompt.classList.remove('hidden');
+                }, 800);
+            }
+        }
+
+        function endGame() {
+            gameState = 'GAMEOVER';
+            screens.gameUi.classList.add('hidden');
+            screens.gameOver.classList.remove('hidden');
+            ui.finalScore.innerText = score;
+
+            // Luôn bắn pháo hoa khi hoàn thành
+            playSound('correct');
+            triggerFireworks();
+        }
+
+        function restartGame() {
+            screens.gameOver.classList.add('hidden');
+            screens.gameUi.classList.remove('hidden');
+            currentQuestionIndex = 0;
+            score = 0;
+            ui.score.innerText = score;
+            loadQuestion();
+        }
+
+        // --- 5. NHẬN DIỆN AI (MEDIPE) ---
+        function onResults(results) {
+            if (gameState === 'LOADING') {
+                screens.loading.classList.add('hidden');
+                screens.gameUi.classList.remove('hidden');
+                loadQuestion();
+            }
+
+            if (results.multiFaceLandmarks) {
+                for (const landmarks of results.multiFaceLandmarks) {
+                    const leftEye = landmarks[33];   
+                    const rightEye = landmarks[263]; 
+                    const diffY = rightEye.y - leftEye.y;
+                    
+                    let tilt = 'center';
+                    if (diffY > 0.04) {
+                        tilt = 'left'; 
+                    } else if (diffY < -0.04) {
+                        tilt = 'right';
+                    }
+
+                    if (gameState === 'PLAYING') {
+                        if (tilt === 'left') {
+                            selectAnswer('left');
+                        } else if (tilt === 'right') {
+                            selectAnswer('right');
+                        }
+                    } else if (gameState === 'COOLDOWN') {
+                        // Đợi nhìn thẳng mới mở câu tiếp theo
+                        if (tilt === 'center') {
+                            loadQuestion();
+                        }
+                    }
+                }
+            }
+        }
+
+        async function startGame() {
+            initAudio(); // Khởi tạo âm thanh sau khi user tương tác (click)
+            
+            currentQuestionIndex = 0;
+            score = 0;
+            ui.score.innerText = score;
+
+            screens.start.classList.add('hidden');
+            
+            // Chỉ nạp AI 1 lần
+            if (!faceMesh) {
+                screens.loading.classList.remove('hidden');
+                gameState = 'LOADING';
+
+                faceMesh = new FaceMesh({locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+                }});
+                faceMesh.setOptions({
+                    maxNumFaces: 1,
+                    refineLandmarks: false,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                faceMesh.onResults(onResults);
+
+                camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await faceMesh.send({image: videoElement});
+                    },
+                    width: 640,
+                    height: 480,
+                    facingMode: 'user'
+                });
+                camera.start();
+            } else {
+                screens.gameUi.classList.remove('hidden');
+                loadQuestion();
+            }
+        }
+
+        // --- 6. GẮN SỰ KIỆN NÚT ---
+        document.getElementById('start-btn').addEventListener('click', startGame);
+        document.getElementById('restart-btn').addEventListener('click', restartGame);
+
+    </script>
+</body>
+</html>
